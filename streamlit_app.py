@@ -1,38 +1,51 @@
-from collections import namedtuple
-import altair as alt
-import math
-import pandas as pd
 import streamlit as st
+from transformers import pipeline
 
-"""
-# Welcome to Streamlit!
-
-Edit `/streamlit_app.py` to customize this app to your heart's desire :heart:
-
-If you have any questions, checkout our [documentation](https://docs.streamlit.io) and [community
-forums](https://discuss.streamlit.io).
-
-In the meantime, below is an example of what you can do with just a few lines of code:
-"""
+@st.cache(allow_output_mutation=True)
+def load_summarizer():
+    model = pipeline("summarization", device=0)
+    return model
 
 
-with st.echo(code_location='below'):
-    total_points = st.slider("Number of points in spiral", 1, 5000, 2000)
-    num_turns = st.slider("Number of turns in spiral", 1, 100, 9)
+def generate_chunks(inp_str):
+    max_chunk = 500
+    inp_str = inp_str.replace('.', '.<eos>')
+    inp_str = inp_str.replace('?', '?<eos>')
+    inp_str = inp_str.replace('!', '!<eos>')
+    
+    sentences = inp_str.split('<eos>')
+    current_chunk = 0 
+    chunks = []
+    for sentence in sentences:
+        if len(chunks) == current_chunk + 1: 
+            if len(chunks[current_chunk]) + len(sentence.split(' ')) <= max_chunk:
+                chunks[current_chunk].extend(sentence.split(' '))
+            else:
+                current_chunk += 1
+                chunks.append(sentence.split(' '))
+        else:
+            chunks.append(sentence.split(' '))
 
-    Point = namedtuple('Point', 'x y')
-    data = []
+    for chunk_id in range(len(chunks)):
+        chunks[chunk_id] = ' '.join(chunks[chunk_id])
+    return chunks
 
-    points_per_turn = total_points / num_turns
 
-    for curr_point_num in range(total_points):
-        curr_turn, i = divmod(curr_point_num, points_per_turn)
-        angle = (curr_turn + 1) * 2 * math.pi * i / points_per_turn
-        radius = curr_point_num / total_points
-        x = radius * math.cos(angle)
-        y = radius * math.sin(angle)
-        data.append(Point(x, y))
+summarizer = load_summarizer()
+st.title("Summarize Text")
+sentence = st.text_area('Please paste your article :', height=30)
+button = st.button("Summarize")
 
-    st.altair_chart(alt.Chart(pd.DataFrame(data), height=500, width=500)
-        .mark_circle(color='#0068c9', opacity=0.5)
-        .encode(x='x:Q', y='y:Q'))
+max = st.sidebar.slider('Select max', 50, 500, step=10, value=150)
+min = st.sidebar.slider('Select min', 10, 450, step=10, value=50)
+do_sample = st.sidebar.checkbox("Do sample", value=False)
+with st.spinner("Generating Summary.."):
+    if button and sentence:
+        chunks = generate_chunks(sentence)
+        res = summarizer(chunks,
+                         max_length=max, 
+                         min_length=min, 
+                         do_sample=do_sample)
+        text = ' '.join([summ['summary_text'] for summ in res])
+        # st.write(result[0]['summary_text'])
+        st.write(text)
