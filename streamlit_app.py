@@ -1,51 +1,58 @@
 import streamlit as st
-from transformers import pipeline
+import spacy
+from spacy.lang.en.stop_words import STOP_WORDS
+from string import punctuation
+stopwords = list(STOP_WORDS)
+from heapq import nlargest
+nlp = spacy.load('en_core_web_sm')
 
-@st.cache(allow_output_mutation=True)
-def load_summarizer():
-    model = pipeline("summarization", device=0)
-    return model
-
-
-def generate_chunks(inp_str):
-    max_chunk = 500
-    inp_str = inp_str.replace('.', '.<eos>')
-    inp_str = inp_str.replace('?', '?<eos>')
-    inp_str = inp_str.replace('!', '!<eos>')
-    
-    sentences = inp_str.split('<eos>')
-    current_chunk = 0 
-    chunks = []
-    for sentence in sentences:
-        if len(chunks) == current_chunk + 1: 
-            if len(chunks[current_chunk]) + len(sentence.split(' ')) <= max_chunk:
-                chunks[current_chunk].extend(sentence.split(' '))
-            else:
-                current_chunk += 1
-                chunks.append(sentence.split(' '))
-        else:
-            chunks.append(sentence.split(' '))
-
-    for chunk_id in range(len(chunks)):
-        chunks[chunk_id] = ' '.join(chunks[chunk_id])
-    return chunks
-
-
-summarizer = load_summarizer()
 st.title("Summarize Text")
-sentence = st.text_area('Please paste your article :', height=30)
+sentence = st.text_area('Please paste your article :', height=300)
+percent = st.slider('Select Max percentage?', 0, 130, 25)
+percent = percent/100
 button = st.button("Summarize")
 
-max = st.sidebar.slider('Select max', 50, 500, step=10, value=150)
-min = st.sidebar.slider('Select min', 10, 450, step=10, value=50)
-do_sample = st.sidebar.checkbox("Do sample", value=False)
+doc = nlp(sentence)
+tokens = (token.text for token in doc)
+punctuation = punctuation + '\n'
+
+word_frequency={}
+for word in doc:
+    if word.text.lower() not in stopwords:
+        if word.text.lower() not in punctuation:
+            if word.text not in word_frequency.keys():
+                word_frequency[word.text] = 1
+            else:
+                word_frequency[word.text]+=1
+
+max_frequency = max(word_frequency.values())
+
+for word in word_frequency.keys():
+    word_frequency[word] = word_frequency[word]/max_frequency
+
+
+sentence_tokens = [sent for sent in doc.sents]
+
+
+sentence_score = {}
+
+for sent in sentence_tokens:
+    for word in sent:
+        if word.text.lower() in word_frequency.keys():
+            if sent not in sentence_score.keys():
+                sentence_score[sent] = word_frequency[word.text.lower()]
+            else:
+                sentence_score[sent] += word_frequency[word.text.lower()]
+
+
+
+select_length = int(len(sentence_tokens)*percent)
+summary = nlargest(select_length,sentence_score,key = sentence_score.get)
+
 with st.spinner("Generating Summary.."):
     if button and sentence:
-        chunks = generate_chunks(sentence)
-        res = summarizer(chunks,
-                         max_length=max, 
-                         min_length=min, 
-                         do_sample=do_sample)
-        text = ' '.join([summ['summary_text'] for summ in res])
-        # st.write(result[0]['summary_text'])
-        st.write(text)
+        values = ','.join(str(v) for v in summary)
+        st.write(values)
+
+
+
